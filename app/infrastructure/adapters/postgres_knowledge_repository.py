@@ -9,6 +9,8 @@ class PostgresKnowledgeRepository(KnowledgeBaseRepositoryPort):
         self.db = db_session
 
     def get_rule_text(self, factor: str, impact: str) -> str:
+        #Debug que db estamos apuntando
+        print(f"DEBUG: Repositorio consultando BD en: {self.db.bind.url}")
         rule = self.db.query(KnowledgeRuleModel).filter(
             KnowledgeRuleModel.factor == factor,
             KnowledgeRuleModel.impact == impact
