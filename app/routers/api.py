@@ -1,13 +1,12 @@
+# app/routers/api.py
 from fastapi import APIRouter
 
-api_router=APIRouter()
+# Importamos la variable 'router' que definiste en recommendation_router.py
+from app.routers.recommendation_router import router as recommendation_router
 
-#Registrar rutas con sintaxis
+api_router = APIRouter()
 
-'''
 api_router.include_router(
-    sync_router.router,
-    tags=["Internal Pipeline"]
+    recommendation_router, 
+    tags=["Recomendaciones Territoriales"]
 )
-
-'''
