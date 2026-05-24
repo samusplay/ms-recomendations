@@ -1,4 +1,5 @@
 # app/application/get_recommendation_use_case.py
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -7,6 +8,7 @@ from app.domain.entities.recommendation import (
     ZoneRecommendation,
 )
 from app.domain.ports.analytics_port import AnalyticsPort
+from app.domain.ports.audit_client_interface import IAuditClient
 from app.domain.ports.ml_port import MLPort
 from app.domain.recommendation_engine import RecommendationEngine
 from app.domain.repository_ports import (
@@ -31,14 +33,16 @@ class GetRecommendationUseCase:
         ml_port: MLPort,
         analytics_port: AnalyticsPort,
         recommendation_repo: RecommendationRepositoryPort,
-        knowledge_repo: KnowledgeBaseRepositoryPort
+        knowledge_repo: KnowledgeBaseRepositoryPort,
+        audit_client: IAuditClient
     ):
         self._ml_port = ml_port
         self._analytics_port = analytics_port
         self._recommendation_repo = recommendation_repo
         self._knowledge_repo = knowledge_repo
+        self._audit_client = audit_client
 
-    async def execute(self, dataset_id:str,zone_code: str) -> Optional[ZoneRecommendation]:
+    async def execute(self, dataset_id:str,zone_code: str, trace_id: str) -> Optional[ZoneRecommendation]:
         # 1. Obtener datos externos (ya pasaron por la Capa Anticorrupción de Pydantic)
         analytics_data = await self._analytics_port.get_zone_score(dataset_id, zone_code)
         #No le pasamos el datasetId
@@ -88,7 +92,34 @@ class GetRecommendationUseCase:
         # 6. Guardar el resultado en db_recommendations a través del puerto
         self._recommendation_repo.save_recommendation(recommendation)
 
+        # 7. Notificación asíncrona a auditoría (degradación controlada)
+        asyncio.create_task(self._notify_audit_async(recommendation, trace_id))
+
         return recommendation
+
+    async def _notify_audit_async(self, recommendation: ZoneRecommendation, trace_id: str):
+        fortalezas = []
+        riesgos = []
+        justificaciones = []
+
+        for rec in recommendation.top_recommendations:
+            if "Positivo" in rec.impact:
+                fortalezas.append(f"{rec.factor} ({rec.impact})")
+            elif "Penalización" in rec.impact:
+                riesgos.append(f"{rec.factor} ({rec.impact})")
+            justificaciones.append(rec.action_text)
+
+        details = {
+            "fortalezas": ", ".join(fortalezas) if fortalezas else "Ninguna",
+            "riesgos": ", ".join(riesgos) if riesgos else "Ninguno",
+            "justificaciones": " | ".join(justificaciones) if justificaciones else "Sin justificación"
+        }
+
+        await self._audit_client.send_recommendation_event(
+            zone_code=recommendation.zone_code,
+            trace_id=trace_id,
+            details=details
+        )
 
     def _map_metrics_to_factors(self, metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Traduce los números crudos de Analytics en reglas de negocio"""

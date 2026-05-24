@@ -1,7 +1,7 @@
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 
 # Importamos el orquestador (Aplicación)
@@ -10,6 +10,7 @@ from app.infrastructure.adapters.http_analytics_adapter import HttpAnalyticsAdap
 
 # Importamos los adaptadores (Infraestructura)
 from app.infrastructure.adapters.http_ml_adapter import HttpMLAdapter
+from app.infrastructure.clients.http_audit_client import HttpAuditClient
 from app.infrastructure.adapters.postgres_knowledge_repository import (
     PostgresKnowledgeRepository,
 )
@@ -37,7 +38,8 @@ def get_use_case(
         ml_port=HttpMLAdapter(),
         analytics_port=HttpAnalyticsAdapter(),
         recommendation_repo=PostgresRecommendationRepository(db),
-        knowledge_repo=PostgresKnowledgeRepository(model_db)
+        knowledge_repo=PostgresKnowledgeRepository(model_db),
+        audit_client=HttpAuditClient()
     )
 
 # Usamos response_model para que Pydantic parsee la entidad del dominio a JSON automáticamente
@@ -45,9 +47,10 @@ def get_use_case(
 async def get_zone_recommendation(
     dataset_id:str,
     zone_code: str,
-    use_case: GetRecommendationUseCase = Depends(get_use_case)
+    use_case: GetRecommendationUseCase = Depends(get_use_case),
+    x_trace_id: str = Header(None, alias="X-Trace-Id")
 ):
-    trace_id = str(uuid.uuid4())
+    trace_id = x_trace_id or str(uuid.uuid4())
     
     # 1. Validación estructural (CA 1)
     if not re.match(r"^\d{1,11}$", zone_code):
@@ -62,7 +65,7 @@ async def get_zone_recommendation(
         )
         
     # 2. Ejecutar el caso de uso
-    recommendation = await use_case.execute(dataset_id, zone_code)
+    recommendation = await use_case.execute(dataset_id, zone_code, trace_id)
     
     # 3. Interrupción controlada
     if not recommendation:
